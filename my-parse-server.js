@@ -5,13 +5,16 @@ var express = require('express'),
     https = require('https'),
     bodyParser = require('body-parser'),
     ipn = require('paypal-ipn'),
-    ParseServer = require('parse-server').ParseServer;
+    ParseServer = require('parse-server').ParseServer,
+    Parse = require('parse/node');
 
 var app = express()
 var settings = require(process.env.CONFIG_FILE);
+var mountPath = settings.mountPath || '/parse/1';
 
-var api = new ParseServer(settings);
-app.use('/parse/1', api);
+Parse.initialize(settings.appId);
+Parse.masterKey = settings.masterKey;
+Parse.serverURL = settings.serverURL || ('http://127.0.0.1:1337' + mountPath);
 
 app.get('/deez', function (req, res) {
     new Parse.Query("Vampire").first({useMasterKey: true}).then(function (v) {
@@ -41,6 +44,16 @@ app.post('/deez', function (req, res) {
         }
     })
     res.send("I found something");
-})
+});
 
-http.createServer(app).listen(1337, '0.0.0.0');
+async function start() {
+    var api = new ParseServer(settings);
+    await api.start();
+    app.use(mountPath, api.app);
+    http.createServer(app).listen(1337, '0.0.0.0');
+}
+
+start().catch(function (error) {
+    console.error(error);
+    process.exit(1);
+});

@@ -6,6 +6,7 @@ var express = require('express'),
     bodyParser = require('body-parser'),
     ipn = require('paypal-ipn'),
     ParseServer = require('parse-server').ParseServer,
+    Parse = require('parse/node'),
     cors = require('cors');
 
 var app = express();
@@ -14,8 +15,11 @@ app.use(serveStatic(process.env.PUBLIC_BASE));
 
 var settings = require(process.env.CONFIG_FILE);
 console.log(settings);
-var api = new ParseServer(settings);
-app.use('/parse/1', api);
+var mountPath = settings.mountPath || '/parse/1';
+
+Parse.initialize(settings.appId);
+Parse.masterKey = settings.masterKey;
+Parse.serverURL = settings.serverURL || ('http://127.0.0.1:8080' + mountPath);
 
 app.get('/deez', function (req, res) {
     new Parse.Query("Vampire").first({useMasterKey: true}).then(function (v) {
@@ -25,4 +29,14 @@ app.get('/deez', function (req, res) {
     });
 });
 
-http.createServer(app).listen(8080, '0.0.0.0');
+async function start() {
+    var api = new ParseServer(settings);
+    await api.start();
+    app.use(mountPath, api.app);
+    http.createServer(app).listen(8080, '0.0.0.0');
+}
+
+start().catch(function (error) {
+    console.error(error);
+    process.exit(1);
+});

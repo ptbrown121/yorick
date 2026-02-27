@@ -1,6 +1,11 @@
 var allTestFiles = [];
 var TEST_REGEXP = /(spec|test)\.js$/i;
 
+// Prevent app code from forcing full reloads during tests.
+try {
+    window.location.reload = function () {};
+} catch (e) {}
+
 // Get a list of all the test files to include
 Object.keys(window.__karma__.files).forEach(function (file) {
     if (TEST_REGEXP.test(file)) {
@@ -56,8 +61,7 @@ require.config({
     paths: {
 
         // Core Libraries
-        //jquery: "jquery",
-        jquery: "//cdnjs.cloudflare.com/ajax/libs/jquery/1.11.2/jquery",
+        jquery: "jquery",
         
         jquerymobile: "jquery.mobile-1.4.5",
         jscookie: "js.cookie",

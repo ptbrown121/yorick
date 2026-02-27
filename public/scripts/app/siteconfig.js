@@ -40,7 +40,7 @@ define([
         SAMPLE_TROUPE_ID: "mXhRByDNxX"
     };
     
-    var ConfigGnuLorienDev = ConfigC9;
+    var ConfigGnuLorienDev = ConfigLocalhost;
     
     return ConfigGnuLorienDev;
 

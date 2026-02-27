@@ -1,1 +1,1 @@
-define(["jquery","parse","../models/ExperienceNotation"],function(e,n,r){var t=n.Collection.extend({model:r,comparator:function(e,n){var r=e.get("entered"),t=n.get("entered");return r>t?-1:t>r?1:0}});return t});
+define(["jquery","parse","../models/ExperienceNotation"],function(e,n,t){return n.Collection.extend({model:t,comparator:function(e,n){var t=e.get("entered"),r=n.get("entered");return t>r?-1:r>t?1:0}})});

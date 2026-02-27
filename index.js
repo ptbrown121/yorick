@@ -5,7 +5,8 @@ var express = require('express'),
     https = require('https'),
     bodyParser = require('body-parser'),
     ipn = require('paypal-ipn'),
-    ParseServer = require('parse-server').ParseServer;
+    ParseServer = require('parse-server').ParseServer,
+    Parse = require('parse/node');
 
 var app = express()
 var settings = {
@@ -17,16 +18,12 @@ var settings = {
   "cloud": process.env.CLOUD_CODE_MAIN || "/home/ubuntu/workspace/cloud/main.js",
   "verbose": true,
   "publicServerURL": process.env.PUBLIC_SERVER_URL || "https://yorick-latest-parse-server-gnu-lorien.c9users.io/parse/1",
-  "serverURL": "http://0.0.0.0:" + process.env.PORT + "/parse/1",
-  "oauth": {
-      "facebook": {
-          "appIds": process.env.FACEBOOK_APP_IDS || ""
-      }
-  }
-}
+  "serverURL": process.env.SERVER_URL || ("http://127.0.0.1:" + process.env.PORT + (process.env.MOUNT_PATH || "/parse/1"))
+};
 
-var api = new ParseServer(settings);
-app.use('/parse/1', api);
+Parse.initialize(settings.appId);
+Parse.masterKey = settings.masterKey;
+Parse.serverURL = settings.serverURL;
 
 app.get('/deez', function (req, res) {
     new Parse.Query("Vampire").first({useMasterKey: true}).then(function (v) {
@@ -56,6 +53,16 @@ app.post('/deez', function (req, res) {
         }
     })
     res.send("I found something");
-})
+});
 
-http.createServer(app).listen(process.env.PORT, '0.0.0.0');
+async function start() {
+    var api = new ParseServer(settings);
+    await api.start();
+    app.use(settings.mountPath, api.app);
+    http.createServer(app).listen(process.env.PORT, '0.0.0.0');
+}
+
+start().catch(function (error) {
+    console.error(error);
+    process.exit(1);
+});

@@ -1,1 +1,1 @@
-define(["jquery","parse"],function(e,n){var r=n.Object.extend("LongText",{});return r});
+define(["jquery","parse"],function(e,n){return n.Object.extend("LongText",{})});

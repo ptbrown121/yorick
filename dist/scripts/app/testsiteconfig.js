@@ -1,1 +1,1 @@
-define([],function(){var r={serverURL:"https://stagingapi.undergroundtheater.org/parse",facebookAppId:"1606746326305984",redirect_uri:"https://stagingpatron.undergroundtheater.org/index.html",SAMPLE_TROUPE_ID:"WOad4CBTsG"},e=r;return e});
+define([],function(){var e="undefined"!=typeof window&&window.__karma__&&window.__karma__.config?window.__karma__.config:{};return{serverURL:e.testServerURL||"http://localhost:1337/parse",facebookAppId:"1606746326305984",redirect_uri:"http://localhost/index.html",SAMPLE_TROUPE_ID:e.testSampleTroupeId||"k7zf9B7bwV"}});

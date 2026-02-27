@@ -1,1 +1,1 @@
-define(["jquery","parse","../models/SimpleTraitMixin"],function(e,i,r){var n=i.Object.extend("SimpleTrait",r);return n});
+define(["jquery","parse","../models/SimpleTraitMixin"],function(e,i,n){return i.Object.extend("SimpleTrait",n)});

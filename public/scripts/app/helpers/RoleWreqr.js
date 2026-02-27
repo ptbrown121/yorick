@@ -39,6 +39,13 @@ define([
                     }).fail(function (error) {
                         console.log("Failed in promise for " + role.get("name"));
                     });
+                }).fail(function (error) {
+                    // Local/dev Parse setups may deny _Role queries for non-admin users.
+                    // Do not block app startup in that case.
+                    if (error && error.code === 119) {
+                        return Parse.Promise.as();
+                    }
+                    return Parse.Promise.error(error);
                 });
             });
             return self._updateRoleWrapper;

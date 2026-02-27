@@ -1,1 +1,1 @@
-define(["jquery","parse","../helpers/ExpirationMixin"],function(e,n,r){var i=n.Object.extend("Patronage",r);return i});
+define(["jquery","parse","../helpers/ExpirationMixin"],function(e,n,r){return n.Object.extend("Patronage",r)});

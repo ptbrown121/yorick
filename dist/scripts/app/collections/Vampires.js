@@ -1,1 +1,1 @@
-define(["jquery","underscore","parse","../models/Vampire"],function(e,t,r,a){var n=r.Collection.extend({model:a,comparator:function(e,r){var a,n,o=this;return t.has(o,"sortbycreated")?(a=r.createdAt,n=e.createdAt):(a=e.get("name"),n=r.get("name")),t.gt(a,n)?1:t.lt(a,n)?-1:0}});return n});
+define(["jquery","underscore","parse","../models/Vampire"],function(e,t,r,n){return r.Collection.extend({model:n,comparator:function(e,r){var n,a;return t.has(this,"sortbycreated")?(n=r.createdAt,a=e.createdAt):(n=e.get("name"),a=r.get("name")),t.gt(n,a)?1:t.lt(n,a)?-1:0}})});

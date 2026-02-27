@@ -1,0 +1,11 @@
+{
+  "appId": "APPLICATION_ID",
+  "appName": "Yorick",
+  "masterKey": "MASTER_KEY",
+  "databaseURI": "mongodb://127.0.0.1:27017/anotherstore",
+  "mountPath": "/parse",
+  "cloud": "/Users/ptbrown121/CodeProjects/yorick/cloud/main.js",
+  "verbose": true,
+  "publicServerURL": "http://127.0.0.1:1337/parse",
+  "serverURL": "http://127.0.0.1:1337/parse"
+}

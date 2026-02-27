@@ -1,1 +1,1 @@
-define(["parse"],function(e){var n=e.Object.extend("bnsmetv1_ClanRule",{});return n});
+define(["parse"],function(e){return e.Object.extend("bnsmetv1_ClanRule",{})});

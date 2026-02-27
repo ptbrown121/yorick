@@ -1,1 +1,1 @@
-define(["jquery","parse"],function(e,n){var r=n.Object.extend("ReferendumBallot");return r});
+define(["jquery","parse"],function(e,n){return n.Object.extend("ReferendumBallot")});

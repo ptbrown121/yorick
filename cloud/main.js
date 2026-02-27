@@ -4,10 +4,63 @@ var pretty = require('./prettyprint').pretty;
 var Vampire = Parse.Object.extend("Vampire");
 var Patronage = Parse.Object.extend("Patronage");
 var Troupe = require('./Troupe.js').Troupe;
-var Image = require("jimp");
-var request = require("request");
+var JimpLib = require("jimp");
+var Image = JimpLib.Jimp || JimpLib;
+var JPEG_MIME = (JimpLib.JimpMime && JimpLib.JimpMime.jpeg) || Image.MIME_JPEG || "image/jpeg";
 var Promise = global.Promise;
 var moment = require("moment");
+
+// Parse Server 8 invokes Cloud Functions with only `request`.
+// Adapt legacy `(request, response)` handlers to return/throw semantics.
+var originalCloudDefine = Parse.Cloud.define.bind(Parse.Cloud);
+Parse.Cloud.define = function(name, handler) {
+    var rest = Array.prototype.slice.call(arguments, 2);
+    if (typeof handler === "function" && handler.length >= 2) {
+        handler = (function(legacyHandler) {
+            return function(request) {
+                return new Promise(function(resolve, reject) {
+                    var settled = false;
+                    var response = {
+                        success: function(result) {
+                            if (!settled) {
+                                settled = true;
+                                resolve(result);
+                            }
+                        },
+                        error: function(error) {
+                            if (!settled) {
+                                settled = true;
+                                reject(error);
+                            }
+                        }
+                    };
+                    try {
+                        var maybePromise = legacyHandler(request, response);
+                        if (maybePromise && typeof maybePromise.then === "function") {
+                            maybePromise.then(function(result) {
+                                if (!settled) {
+                                    settled = true;
+                                    resolve(result);
+                                }
+                            }, function(error) {
+                                if (!settled) {
+                                    settled = true;
+                                    reject(error);
+                                }
+                            });
+                        }
+                    } catch (error) {
+                        if (!settled) {
+                            settled = true;
+                            reject(error);
+                        }
+                    }
+                });
+            };
+        })(handler);
+    }
+    return originalCloudDefine.apply(Parse.Cloud, [name, handler].concat(rest));
+};
 
 /* FIXME Shouldn't just paste this class in here. Still need a way to sync between
    the require world and the node world */
@@ -21,35 +74,16 @@ Parse.Cloud.define("hello", function(request, response) {
 var create_thumbnail = function(portrait, input_image, size) {
     var promise = new Promise(
         function(resolve, reject) {
-            var cb = function(err, buffer) {
-                    if (err) reject(err);
-                    else resolve(buffer);
-                }
-            var img = input_image.getBuffer(Image.MIME_JPEG, cb);
+            input_image.getBuffer(JPEG_MIME).then(resolve, reject);
         }
     );
     return promise.then(function (buffer) {
         return Image.read(buffer);
     }).then(function(image) {
-        return new Promise(
-            function(resolve, reject) {
-                var cb = function(err, unused) {
-                    if (err) reject(err);
-                    else resolve(image);
-                }
-                var img = image.scaleToFit(size, size, cb);
-            }
-        );
+        image.scaleToFit({w: size, h: size});
+        return image;
     }).then(function (image) {
-        return new Promise(
-            function (resolve, reject) {
-                var cb = function (err, buffer) {
-                    if (err) reject(err);
-                    else resolve(buffer);
-                }
-                var img = image.getBuffer(Image.MIME_JPEG, cb);
-            }
-        );
+        return image.getBuffer(JPEG_MIME);
     }).then(function (buffer) {
         var base64 = buffer.toString("base64");
         var cropped = new Parse.File("thumbnail_" + size + ".jpg", {base64: base64});
@@ -84,18 +118,18 @@ var crop_and_thumb = function(req, res) {
     Image.read(portrait.get("original").url()).then(function (image) {
         // Crop the image to the smaller of width or height.
         var size = Math.min(image.bitmap.width, image.bitmap.height);
-        return image.crop(
-            (image.bitmap.width - size) / 2,
-            (image.bitmap.height - size) / 2,
-            size,
-            size
-        );
+        return image.crop({
+            x: (image.bitmap.width - size) / 2,
+            y: (image.bitmap.height - size) / 2,
+            w: size,
+            h: size
+        });
     }).then(function (image) {
         var promises = [];
         _.each(THUMBNAIL_SIZES, function (size) {
             promises.push(create_thumbnail(portrait, image, size))
         })
-        return Parse.Promise.when(promises);
+        return Promise.all(promises);
     }).then(function () {
         res.success();
     }, function (error) {
@@ -144,7 +178,7 @@ var get_vampire_change_acl = function(vampire) {
     return acl;
 }
 
-Parse.Cloud.beforeSave("Vampire", function(request, response) {
+Parse.Cloud.beforeSave("Vampire", async function(request) {
     var tracked_texts = [
         "name",
         "clan",
@@ -165,24 +199,25 @@ Parse.Cloud.beforeSave("Vampire", function(request, response) {
     var desired_changes = _.intersection(tracked_texts, v.dirtyKeys());
     if (0 === desired_changes.length) {
         console.log("Saving vampire (" + v.id + ") and there are no changes we track here");
-        return response.success();
+        return;
     }
     
     var modified_vampire = request.object;
     if (_.isUndefined(modified_vampire.id)) {
         console.log("Creating a new vampire named " + request.object.get("name"));
-        return response.success();
+        return;
     }
     
     // TODO: Update the history permissions if troupes has changed
     
     var new_values = {};
-    _.each(v.dirtyKeys(), function(k) {
+    _.each(desired_changes, function(k) {
         new_values[k] = v.get(k);
-    })
+    });
     var vToFetch = new Vampire({id: v.id});
-    vToFetch.fetch({useMasterKey: true}).then(function(vampire) {
-        return Parse.Object.saveAll(_.map(_.toPairs(new_values), function(a) {
+    try {
+        var vampire = await vToFetch.fetch({useMasterKey: true});
+        await Parse.Object.saveAll(_.map(_.toPairs(new_values), function(a) {
             var attribute = a[0], val = a[1];
             var vc = new Parse.Object("VampireChange");
             vc.set({
@@ -198,28 +233,42 @@ Parse.Cloud.beforeSave("Vampire", function(request, response) {
             vc.setACL(acl);
             return vc;
         }), {useMasterKey: true});
-    }).then(function () {
-        return response.success();
-    }).fail(function (error) {
+    } catch (error) {
         console.log(error.message);
-        response.error(error);
-    })
+        throw error;
+    }
 });
 
 var isMeaningfulChange = function (vc) {
     var changed = true;
     if ("update" == vc.get("type")) {
+        var normalizeNumber = function (value) {
+            if (_.isNil(value) || value === "") {
+                return 0;
+            }
+            var parsed = Number(value);
+            if (_.isNaN(parsed)) {
+                return 0;
+            }
+            return parsed;
+        };
+        var normalizeText = function (value) {
+            if (_.isNil(value)) {
+                return "";
+            }
+            return "" + value;
+        };
         changed = false;
-        if (vc.get("old_value") != vc.get("value")) {
+        if (normalizeNumber(vc.get("old_value")) !== normalizeNumber(vc.get("value"))) {
             changed = true;
         }
-        if (vc.get("old_cost") != vc.get("cost")) {
+        if (normalizeNumber(vc.get("old_cost")) !== normalizeNumber(vc.get("cost"))) {
             changed = true;
         }
-        if (vc.get("old_text") != vc.get("name")) {
+        if (normalizeText(vc.get("old_text")) !== normalizeText(vc.get("name"))) {
             changed = true;
         }
-        if (vc.get("free_value") != vc.get("old_free_value")) {
+        if (normalizeNumber(vc.get("old_free_value")) !== normalizeNumber(vc.get("free_value"))) {
             changed = true;
         }
     }
@@ -227,34 +276,41 @@ var isMeaningfulChange = function (vc) {
     return changed;
 }
 
-Parse.Cloud.beforeSave("SimpleTrait", function(request, response) {
+Parse.Cloud.beforeSave("SimpleTrait", async function(request) {
     console.log("beforeSave SimpleTrait");
     var vc = new Parse.Object("VampireChange");
     var modified_trait = request.object;
-    if (_.isUndefined(modified_trait.id)) {
-        var flow_promise = Parse.Promise.as({});
-        console.log("beforeSave simpleTrait Setting blank flow promise");
-    } else {
-        var flow_promise = new Parse.Query("SimpleTrait").get(modified_trait.id, {useMasterKey: true}).then(function (st) {
+    try {
+        var serverData = {};
+        if (_.isUndefined(modified_trait.id)) {
+            console.log("beforeSave simpleTrait Setting blank flow promise");
+        } else {
+            var st = await new Parse.Query("SimpleTrait").get(modified_trait.id, {useMasterKey: true});
             console.log("beforeSave simpleTrait Calling _getServerData()");
-            return st._getServerData();
-        });
-        console.log("beforeSave simpleTrait Setting fetch flow promise");
-    }
-    flow_promise.then(function(serverData) {
+            serverData = st._getServerData();
+            console.log("beforeSave simpleTrait Setting fetch flow promise");
+        }
         console.log("beforeSave simpleTrait Starting with serverdata response " + JSON.stringify(modified_trait));
         console.log(JSON.stringify(serverData));
+        var merged = {
+            name: _.isUndefined(modified_trait.get("name")) ? serverData.name : modified_trait.get("name"),
+            category: _.isUndefined(modified_trait.get("category")) ? serverData.category : modified_trait.get("category"),
+            owner: _.isUndefined(modified_trait.get("owner")) ? serverData.owner : modified_trait.get("owner"),
+            value: _.isUndefined(modified_trait.get("value")) ? serverData.value : modified_trait.get("value"),
+            free_value: _.isUndefined(modified_trait.get("free_value")) ? serverData.free_value : modified_trait.get("free_value"),
+            cost: _.isUndefined(modified_trait.get("cost")) ? serverData.cost : modified_trait.get("cost")
+        };
         vc.set({
-            "name": modified_trait.get("name"),
-            "category": modified_trait.get("category"),
-            "owner": modified_trait.get("owner"),
+            "name": merged.name,
+            "category": merged.category,
+            "owner": merged.owner,
             "old_value": serverData.value,
-            "value": modified_trait.get("value"),
+            "value": merged.value,
             "type": serverData.value === undefined ? "define" : "update",
             "old_free_value": serverData.free_value,
-            "free_value": modified_trait.get("free_value"),
+            "free_value": merged.free_value,
             "old_cost": serverData.cost,
-            "cost": modified_trait.get("cost"),
+            "cost": merged.cost,
             "old_text": serverData.name,
             "simple_trait_id": modified_trait.id,
             "instigator": request.user
@@ -262,28 +318,24 @@ Parse.Cloud.beforeSave("SimpleTrait", function(request, response) {
 
         if (!isMeaningfulChange(vc)) {
             console.log("Update does not actually encode a change for trait " + (modified_trait.id ? modified_trait.get("name") : modified_trait.id));
-            response.success();
             return;
         }
 
         console.log("beforeSave SimpleTrait Sending query for the vampire " + vc.get("owner").id + " because " + (modified_trait.id ? modified_trait.get("name") : modified_trait.id));
-        return new Parse.Query("Vampire").get(vc.get("owner").id, {useMasterKey: true});
-    }).then(function(vampire) {
+        var vampire = await new Parse.Query("Vampire").get(vc.get("owner").id, {useMasterKey: true});
         console.log("beforeSave SimpleTrait Getting acl vampire " + vampire.id);
         var acl = get_vampire_change_acl(vampire);
         vc.setACL(acl);
 
         console.log("beforeSave SimpleTrait Sending save acl vampire " + vampire.id);
-        return vc.save({}, {useMasterKey: true});
-    }).then(function (vc) {
-        request.object.set("definition_change", vc);
-        response.success();
+        var savedVc = await vc.save({}, {useMasterKey: true});
+        request.object.set("definition_change", savedVc);
         if (!request.object.id) {
-            console.log("Successfully beforeSave new SimpleTrait " + modified_trait.get("name") + " for " + modified_trait.get("owner").id + " with vc id " + vc.id);
+            console.log("Successfully beforeSave new SimpleTrait " + modified_trait.get("name") + " for " + modified_trait.get("owner").id + " with vc id " + savedVc.id);
         } else {
             console.log("Successfully beforeSave SimpleTrait " + request.object.id + " " + modified_trait.get("name") + " for " + modified_trait.get("owner").id);
         }
-    }, function (error) {
+    } catch (error) {
         var failStr;
         if (!request.object.id) {
             failStr = "Failed to beforeSave new SimpleTrait " + modified_trait.get("name") + " for " + modified_trait.get("owner").get("name") + " because of " + error.message;
@@ -292,8 +344,8 @@ Parse.Cloud.beforeSave("SimpleTrait", function(request, response) {
         }
         console.log(failStr);
         error.message = failStr;
-        response.error(error);
-    });
+        throw error;
+    }
 });
 
 Parse.Cloud.afterSave("SimpleTrait", function(request) {
@@ -314,22 +366,22 @@ Parse.Cloud.afterSave("SimpleTrait", function(request) {
     });
 });
 
-Parse.Cloud.beforeDelete("SimpleTrait", function(request, response) {
+Parse.Cloud.beforeDelete("SimpleTrait", async function(request) {
     var vc = new Parse.Object("VampireChange");
     var trait = request.object;
     console.log("beforeDelete SimpleTrait Getting the server trait data " + trait.id);
-    (new Parse.Query("SimpleTrait").get(trait.id, {useMasterKey: true})).then(function(st) {
-        return st._getServerData();
-    }).then(function(serverData) {
+    try {
+        var st = await new Parse.Query("SimpleTrait").get(trait.id, {useMasterKey: true});
+        var serverData = st._getServerData();
         console.log(pretty(serverData));
         vc.set({
-            "name": trait.get("name"),
-            "category": trait.get("category"),
-            "owner": trait.get("owner"),
+            "name": _.isUndefined(trait.get("name")) ? st.get("name") : trait.get("name"),
+            "category": _.isUndefined(trait.get("category")) ? st.get("category") : trait.get("category"),
+            "owner": _.isUndefined(trait.get("owner")) ? st.get("owner") : trait.get("owner"),
             "old_value": serverData.value,
-            "value": trait.get("value"),
+            "value": _.isUndefined(trait.get("value")) ? st.get("value") : trait.get("value"),
             "old_free_value": serverData.free_value,
-            "free_value": trait.get("free_value"),
+            "free_value": _.isUndefined(trait.get("free_value")) ? st.get("free_value") : trait.get("free_value"),
             "type": "remove",
             "old_cost": serverData.cost,
             "simple_trait_id": trait.id,
@@ -337,20 +389,17 @@ Parse.Cloud.beforeDelete("SimpleTrait", function(request, response) {
         });
 
         console.log("beforeDelete SimpleTrait Getting the vampire owner " + vc.get("owner").id + " for trait " + trait.id);
-        return new Parse.Query("Vampire").get(vc.get("owner").id, {useMasterKey: true});
-    }).then(function(vampire) {
+        var vampire = await new Parse.Query("Vampire").get(vc.get("owner").id, {useMasterKey: true});
         var acl = get_vampire_change_acl(vampire);
         vc.setACL(acl);
-        return vc.save({}, {useMasterKey: true});
-    }).then(function () {
+        await vc.save({}, {useMasterKey: true});
         console.log("beforeDelete SimpleTrait saved trait " + trait.id + " for " + vc.get("owner").id);
-        response.success();
-    }, function (error) {
+    } catch (error) {
         var failStr = "beforeDelete SimpleTrait Failed to delete for trait " + request.object.id + " because of " + pretty(error);
         console.log(failStr);
         error.message = failStr;
-        response.error(error);
-    });
+        throw error;
+    }
 });
 
 Parse.Cloud.afterSave("Patronage", function(request) {
@@ -497,7 +546,7 @@ Parse.Cloud.define("get_expected_vampire_ids", function(request, response) {
         VampireChange: []
     };
     var v = new Parse.Object("Vampire", {id: character_id});
-    Parse.Promise.when(_.map(["SimpleTrait", "ExperienceNotation", "VampireChange"], function (class_name) {
+    Promise.all(_.map(["SimpleTrait", "ExperienceNotation", "VampireChange"], function (class_name) {
          var q = new Parse.Query(class_name)
             .equalTo("owner", v)
             .select("id");
@@ -517,7 +566,7 @@ var add_administrator_to_everything = function(model) {
     var acl = model.getACL();
     if (_.isUndefined(acl)) {
         // Not completely defined for some reason
-        return Parse.Promise.as([]);
+        return Promise.resolve([]);
     }
     acl.setRoleReadAccess("Administrator", true);
     acl.setRoleWriteAccess("Administrator", true);
@@ -547,7 +596,7 @@ Parse.Cloud.define("submit_facebook_profile_data", function(request, response) {
         .first({useMasterKey: true})
     .then(function (s) {
         if (s) {
-            return Parse.Promise.as(s);
+            return Promise.resolve(s);
         } else {
             var storage = new Parse.Object("UserFacebookData");
             var acl = new Parse.ACL;
@@ -558,7 +607,7 @@ Parse.Cloud.define("submit_facebook_profile_data", function(request, response) {
             acl.setRoleReadAccess("Administrator", true);
             acl.setRoleWriteAccess("Administrator", true);
             storage.setACL(acl);
-            return Parse.Promise.as(storage);
+            return Promise.resolve(storage);
         }
     })
     .then(function (storage) {
@@ -725,10 +774,10 @@ function matchUserInRoles(all_roles_to_check, user_id) {
     uq.equalTo("objectId", user_id);
     return uq.get(user_id).then(function (user) {
         console.log("Matched a user in the role! " + role.get("name") + " " + user.get("username"));
-        return Parse.Promise.as(user);
+        return Promise.resolve(user);
     }, function (error) {
         if (0 == remaining_roles_to_check.length) {
-            return Parse.Promise.error("Couldn't find user in appropriate roles");
+            return Promise.reject(new Error("Couldn't find user in appropriate roles"));
         } else {
             return matchUserInRoles(remaining_roles_to_check, user_id);
         }
@@ -765,7 +814,7 @@ Parse.Cloud.define("change_troupe_staff", function(request, response) {
                 console.log("Failed to save role " + s.get("name") + " with " + JSON.stringify(error));
             });
         })
-        return Parse.Promise.when(promises);
+        return Promise.all(promises);
     }
     
     var all_roles_to_check = [];
@@ -793,8 +842,7 @@ Parse.Cloud.define("change_troupe_staff", function(request, response) {
         return matchUserInRoles(all_roles_to_check, request.user.id);
     }).then(function (user) {
         console.log("Got user for relation " + user.get("username"));
-        return Parse.Promise
-            .when(troupe.get_roles())
+        return troupe.get_roles()
             .then(alter_roles)
             .then(function () {
                 return troupe.get_generic_roles();

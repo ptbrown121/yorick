@@ -14,8 +14,9 @@ define([
                 Parse.Error.SESSION_MISSING == error.code ||
                 _.startsWith(error.message, "Facebook auth is invalid for this user")) {
                 Parse.User.logOut();
-                if (window)
+                if (window && !window.__karma__) {
                     window.location.reload();
+                }
             } else {
                 console.info("Error in promise " + JSON.stringify(error));
                 try {
@@ -40,6 +41,10 @@ define([
         if (_.isArray(error)) {
             console.log("Error in a multi-promise follows {");
             _.each(error, function (e, i) {
+                if (_.isUndefined(e) || _.isNull(e)) {
+                    console.log("" + i + " returned no result");
+                    return;
+                }
                 if (_.has(e, "success")) {
                     console.log("" + i + " succeeded at " + e.updatedAt);
                 } else {

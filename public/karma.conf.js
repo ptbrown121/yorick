@@ -2,6 +2,10 @@
 // Generated on Sat Nov 07 2015 22:22:03 GMT-0500 (Eastern Standard Time)
 
 module.exports = function(config) {
+  // Parse JS 1.5 appends "/1" internally, so tests need the base mount ("/parse"), not "/parse/1".
+  var rawTestServerURL = process.env.TEST_PARSE_SERVER_URL || 'http://localhost:1337/parse';
+  var normalizedTestServerURL = rawTestServerURL.replace(/\/parse\/1\/?$/, '/parse');
+
   config.set({
 
     // base path that will be used to resolve all patterns (eg. files, exclude)
@@ -15,10 +19,10 @@ module.exports = function(config) {
 
     // list of files / patterns to load in the browser
     files: [
-      {pattern: 'scripts/tests/*.js', included: false},
+      'scripts/app/tests/test-main.js',
+      {pattern: 'scripts/app/tests/**/*.js', included: false},
       {pattern: 'scripts/app/**/*.js', included: false},
       {pattern: 'scripts/lib/**/*.js', included: false},
-      'scripts/app/tests/test-main.js',
     ],
 
 
@@ -58,7 +62,7 @@ module.exports = function(config) {
 
     // start these browsers
     // available browser launchers: https://npmjs.org/browse/keyword/karma-launcher
-    browsers: ['PhantomJS'],
+    browsers: ['ChromeHeadless'],
 
 
     // Continuous Integration mode
@@ -67,6 +71,15 @@ module.exports = function(config) {
 
     // Concurrency level
     // how many browser should be started simultanous
-    concurrency: Infinity
+    concurrency: Infinity,
+
+    client: {
+      jasmine: {
+        random: false
+      },
+      // Can be overridden per-run: TEST_PARSE_SERVER_URL=... npm test
+      testServerURL: normalizedTestServerURL,
+      testSampleTroupeId: process.env.TEST_SAMPLE_TROUPE_ID || 'k7zf9B7bwV'
+    }
   })
 }

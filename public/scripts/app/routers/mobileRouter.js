@@ -246,7 +246,14 @@ define([
             var self = this;
             this.enforce_logged_in().then(function () {
                 var q = (new Parse.Query(Parse.Role)).equalTo("users", Parse.User.current());
-                return q.count();
+                return q.count().fail(function (error) {
+                    // Local/dev Parse setups can deny direct _Role counts for normal users.
+                    // Treat that as "no roles" so the app can continue loading.
+                    if (error && error.code === 119) {
+                        return Parse.Promise.as(0);
+                    }
+                    return Parse.Promise.error(error);
+                });
             }).then(function (count) {
                 var user = Parse.User.current();
                 if (0 < count) {
@@ -255,7 +262,10 @@ define([
                     user.set("storytellerinterface", false);
                 }
                 InjectAuthData(user);
-                return user.save();
+                return user.save().fail(function () {
+                    // Avoid blocking initial navigation in local/dev if user field writes are restricted.
+                    return Parse.Promise.as(user);
+                });
             }).then(function () {
                 self.playerOptionsView = self.playerOptionsView || new PlayerOptionsView({el: "#player-options"}).setup();
                 $.mobile.changePage("#player-options", {reverse: false, changeHash: false});
@@ -1248,7 +1258,13 @@ define([
                 var adminq = (new Parse.Query(Parse.Role)).equalTo("users", Parse.User.current()).equalTo("name", "Administrator");
                 var siteadminq = (new Parse.Query(Parse.Role)).equalTo("users", Parse.User.current()).equalTo("name", "SiteAdministrator");
                 var q = Parse.Query.or(adminq, siteadminq);
-                return q.count().then(function (count) {
+                return q.count().fail(function (error) {
+                    // Local/dev Parse setups can deny _Role queries for normal users.
+                    if (error && error.code === 119) {
+                        return Parse.Promise.as(0);
+                    }
+                    return Parse.Promise.error(error);
+                }).then(function (count) {
                     var isadministrator = count ? true : false;
                     var user = Parse.User.current();
                     if (user.get("admininterface") != isadministrator) {

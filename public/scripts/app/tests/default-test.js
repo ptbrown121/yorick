@@ -54,33 +54,58 @@ define([
     });
     var ParseStart = function() {
         ParseInit();
-        if (!_.eq(Parse.User.current().get("username"), "devuser")) {
-            return Parse.User.logIn("devuser", "thedumbness");
-        }
-        return Parse.Promise.as(Parse.User.current());
+        return ensureUser("devuser", "thedumbness");
     };
 
     var MemberParseStart = function () {
         ParseInit();
-        if (!_.eq(Parse.User.current().get("username"), "sampmem")) {
-            return Parse.User.logIn("sampmem", "sampmem");
-        }
-        return Parse.Promise.as(Parse.User.current());
+        return ensureUser("sampmem", "sampmem");
     };
 
     var ASTParseStart = function () {
         ParseInit();
-        if (!_.eq(Parse.User.current().get("username"), "sampast")) {
-            return Parse.User.logIn("sampast", "sampast");
+        return ensureUser("sampast", "sampast");
+    };
+
+    var ensureUser = function (username, password) {
+        var current = Parse.User.current();
+        if (current && _.eq(current.get("username"), username)) {
+            return Parse.Promise.as(current);
         }
-        return Parse.Promise.as(Parse.User.current());
+        if (current) {
+            return Parse.User.logOut().then(function () {
+                return Parse.User.logIn(username, password);
+            }).then(function (user) {
+                return user;
+            }, function (error) {
+                if (error && error.code === 101) {
+                    return Parse.User.signUp(username, password, {});
+                }
+                return Parse.Promise.error(error);
+            });
+        }
+        return Parse.User.logIn(username, password).then(function (user) {
+            return user;
+        }, function (error) {
+            // Support fresh local databases where fixture users do not exist yet.
+            if (error && error.code === 101) {
+                return Parse.User.signUp(username, password, {});
+            }
+            return Parse.Promise.error(error);
+        });
     };
 
     describe("Parse", function() {
-        beforeAll(function() {
+        beforeAll(function(done) {
             ParseInit();
             if (Parse.User.current()) {
-                Parse.User.logOut();
+                Parse.User.logOut().then(function () {
+                    done();
+                }, function (error) {
+                    done.fail(error);
+                });
+            } else {
+                done();
             }
         });
 
